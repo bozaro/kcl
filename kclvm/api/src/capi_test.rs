@@ -1,14 +1,19 @@
-use crate::gpyrpc::*;
-use crate::service::capi::*;
+use std::{env, fs, thread};
+use std::default::Default;
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
+
 use once_cell::sync::Lazy;
 use prost::Message;
 use serde::de::DeserializeOwned;
-use std::default::Default;
-use std::ffi::{CStr, CString};
-use std::fs;
-use std::os::raw::c_char;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+
+use crate::gpyrpc::*;
+use crate::service::capi::*;
+use crate::service::KclvmServiceImpl;
 
 const TEST_DATA_PATH: &str = "./src/testdata";
 static TEST_MUTEX: Lazy<Mutex<i32>> = Lazy::new(|| Mutex::new(0i32));
@@ -21,6 +26,53 @@ fn test_c_api_call_exec_program() {
         "exec-program.response.json",
         |_| {},
     );
+}
+
+#[no_mangle]
+unsafe extern "C" fn dummy_plugin_agent(method: *const std::ffi::c_char, args_json: *const std::ffi::c_char, kwargs_json: *const std::ffi::c_char) -> *const u8 {
+    return "42\0".as_ptr()
+}
+
+#[test]
+fn test_c_api_call_exec_program_concurrency() {
+    let mut handles = vec![];
+    let counter = Arc::new(AtomicU32::new(0));
+    for id in 0..10 {
+        let counter = counter.clone();
+        let serv = KclvmServiceImpl {
+            plugin_agent: unsafe { std::mem::transmute(dummy_plugin_agent as *const u8) },
+        };
+        let handle = thread::spawn(move || {
+            let exec_args = ExecProgramArgs {
+                work_dir: Path::new(".").join("src").join("testdata").canonicalize().unwrap().display().to_string(),
+                args: vec![CmdArgSpec {
+                    name: "foo".to_string(),
+                    value: "10".to_string(),
+                }],
+                disable_yaml_result: true,
+                k_filename_list: vec!["hello_plugin.k".to_string()],
+                ..Default::default()
+            };
+            let artifact = serv.build_program(&BuildProgramArgs {
+                exec_args: Some(exec_args.clone()),
+                output: env::temp_dir().as_path().join(format!("kcl_capi_test.{}.{}", std::process::id(), id)).display().to_string(),
+                ..Default::default()
+            }).unwrap();
+            println!("{}", artifact.path.as_str());
+
+            while counter.fetch_add(1, Ordering::Relaxed) <= 1000 {
+                serv.exec_artifact(&ExecArtifactArgs {
+                    path: artifact.path.clone(),
+                    exec_args: Some(exec_args.clone()),
+                }).unwrap();
+            }
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
 }
 
 #[test]
