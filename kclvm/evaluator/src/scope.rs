@@ -374,6 +374,19 @@ impl<'ctx> Evaluator<'ctx> {
 
     /// Get the variable value named `name` from the scope named `pkgpath`, return Err when not found
     pub fn get_variable_in_pkgpath(&self, name: &str, pkgpath: &str) -> ValueRef {
+        self.get_variable_in_pkgpath_scope(name, pkgpath)
+            .or_else(|| self.get_value_from_lazy_scope(pkgpath, name, ""))
+            .unwrap_or_else(|| {
+                let result = self.undefined_value();
+                // Not found variable in the scope, maybe lambda closures captured in other package scopes.
+                self.last_lambda_ctx()
+                    .map(|ctx| ctx.closure.get(name).cloned().unwrap_or(result.clone()))
+                    .unwrap_or(result)
+            })
+    }
+
+    /// Get the variable value named `name` from the scope named `pkgpath`, return Err when not found
+    pub fn get_variable_in_pkgpath_scope(&self, name: &str, pkgpath: &str) -> Option<ValueRef> {
         let pkgpath =
             if !pkgpath.starts_with(kclvm_runtime::PKG_PATH_PREFIX) && pkgpath != MAIN_PKG_PATH {
                 format!("{}{}", kclvm_runtime::PKG_PATH_PREFIX, pkgpath)
@@ -391,9 +404,9 @@ impl<'ctx> Evaluator<'ctx> {
                 let value_float: f64 = kclvm_runtime::f64_unit_value(name);
                 let value_int: u64 = kclvm_runtime::u64_unit_value(name);
                 if value_int != 1 {
-                    self.int_value(value_int as i64)
+                    Some(self.int_value(value_int as i64))
                 } else {
-                    self.float_value(value_float)
+                    Some(self.float_value(value_float))
                 }
             } else {
                 let func_name = format!(
@@ -403,61 +416,56 @@ impl<'ctx> Evaluator<'ctx> {
                     name
                 );
                 let function_ptr = _kclvm_get_fn_ptr_by_name(&func_name);
-                self.function_value_with_ptr(function_ptr)
+                Some(self.function_value_with_ptr(function_ptr))
             }
         }
         // Plugin pkgpath
         else if pkgpath.starts_with(plugin::PLUGIN_PREFIX_WITH_AT) {
             // Strip the @kcl_plugin to kcl_plugin.
             let name = format!("{}.{}", &pkgpath[1..], name);
-            ValueRef::func(0, 0, self.undefined_value(), &name, "", true)
+            Some(ValueRef::func(
+                0,
+                0,
+                self.undefined_value(),
+                &name,
+                "",
+                true,
+            ))
         // User pkgpath
         } else {
-            let mut found = false;
-            {
-                let pkg_scopes = self.pkg_scopes.borrow();
-                // Global or local variables.
-                let scopes = pkg_scopes
-                    .get(&pkgpath)
-                    .unwrap_or_else(|| panic!("package {} is not found", pkgpath));
-                // Scopes 0 is builtin scope, Scopes 1 is the global scope, Scopes 2~ are the local scopes
-                let scopes_len = scopes.len();
-                for i in 0..scopes_len {
-                    let index = scopes_len - i - 1;
-                    let variables = &scopes[index].variables;
-                    if let Some(var) = variables.get(name) {
-                        // Closure vars, 2 denotes the builtin scope and the global scope, here is a closure scope.
-                        result = if let Some(lambda_ctx) = self.last_lambda_ctx() {
-                            let last_lambda_scope = lambda_ctx.level;
-                            // Local scope variable or lambda closure variable.
-                            let ignore =
-                                if let Some((start, end)) = self.scope_covers.borrow().last() {
-                                    *start <= index && index <= *end
-                                } else {
-                                    false
-                                };
-                            if index >= last_lambda_scope && !ignore {
-                                var.clone()
-                            } else {
-                                lambda_ctx.closure.get(name).unwrap_or(var).clone()
-                            }
+            let pkg_scopes = self.pkg_scopes.borrow();
+            // Global or local variables.
+            let scopes = pkg_scopes
+                .get(&pkgpath)
+                .unwrap_or_else(|| panic!("package {} is not found", pkgpath));
+            // Scopes 0 is builtin scope, Scopes 1 is the global scope, Scopes 2~ are the local scopes
+            let scopes_len = scopes.len();
+            for i in 0..scopes_len {
+                let index = scopes_len - i - 1;
+                let variables = &scopes[index].variables;
+                if let Some(var) = variables.get(name) {
+                    // Closure vars, 2 denotes the builtin scope and the global scope, here is a closure scope.
+                    result = if let Some(lambda_ctx) = self.last_lambda_ctx() {
+                        let last_lambda_scope = lambda_ctx.level;
+                        // Local scope variable or lambda closure variable.
+                        let ignore = if let Some((start, end)) = self.scope_covers.borrow().last() {
+                            *start <= index && index <= *end
                         } else {
-                            // Not in the lambda, maybe a local variable.
-                            var.clone()
+                            false
                         };
-                        found = true;
-                        break;
-                    }
+                        if index >= last_lambda_scope && !ignore {
+                            var.clone()
+                        } else {
+                            lambda_ctx.closure.get(name).unwrap_or(var).clone()
+                        }
+                    } else {
+                        // Not in the lambda, maybe a local variable.
+                        var.clone()
+                    };
+                    return Some(result);
                 }
             }
-            if found {
-                result
-            } else {
-                // Not found variable in the scope, maybe lambda closures captured in other package scopes.
-                self.last_lambda_ctx()
-                    .map(|ctx| ctx.closure.get(name).cloned().unwrap_or(result.clone()))
-                    .unwrap_or(result)
-            }
+            None
         }
     }
 
@@ -552,11 +560,13 @@ impl<'ctx> Evaluator<'ctx> {
                 let variable = self.get_variable(name);
                 match self.resolve_variable_level(name) {
                     // Closure variable or local variables
-                    Some(level) if level <= GLOBAL_LEVEL => self.get_value_from_lazy_scope(
-                        &self.current_pkgpath(),
-                        name,
-                        &self.get_target_var(),
-                    ).unwrap_or(variable),
+                    Some(level) if level <= GLOBAL_LEVEL => self
+                        .get_value_from_lazy_scope(
+                            &self.current_pkgpath(),
+                            name,
+                            &self.get_target_var(),
+                        )
+                        .unwrap_or(variable),
                     // Schema closure or global variables
                     _ => variable,
                 }

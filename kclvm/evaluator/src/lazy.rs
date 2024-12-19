@@ -361,15 +361,14 @@ impl<'ctx> Evaluator<'ctx> {
                                 self.walk_stmts_with_setter(&setters[index]);
                                 self.pop_pkgpath();
                                 // Store cache value.
-                                {
-                                    let value = self.get_variable_in_pkgpath(key, pkgpath);
-                                    let mut lazy_scopes = self.lazy_scopes.borrow_mut();
-                                    let scope =
-                                        lazy_scopes.get_mut(pkgpath).expect(INTERNAL_ERROR_MSG);
-                                    scope.levels.insert(key.to_string(), level);
-                                    scope.cache.insert(key.to_string(), value.clone());
-                                    Some(value)
-                                }
+                                let value = self
+                                    .get_variable_in_pkgpath_scope(key, pkgpath)
+                                    .unwrap_or(self.undefined_value());
+                                let mut lazy_scopes = self.lazy_scopes.borrow_mut();
+                                let scope = lazy_scopes.get_mut(pkgpath).expect(INTERNAL_ERROR_MSG);
+                                scope.levels.insert(key.to_string(), level);
+                                scope.cache.insert(key.to_string(), value.clone());
+                                Some(value)
                             }
                         }
                         _ => None,
