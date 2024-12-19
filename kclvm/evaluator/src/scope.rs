@@ -374,7 +374,6 @@ impl<'ctx> Evaluator<'ctx> {
 
     /// Get the variable value named `name` from the scope named `pkgpath`, return Err when not found
     pub fn get_variable_in_pkgpath(&self, name: &str, pkgpath: &str) -> ValueRef {
-        let pkg_scopes = self.pkg_scopes.borrow();
         let pkgpath =
             if !pkgpath.starts_with(kclvm_runtime::PKG_PATH_PREFIX) && pkgpath != MAIN_PKG_PATH {
                 format!("{}{}", kclvm_runtime::PKG_PATH_PREFIX, pkgpath)
@@ -414,37 +413,41 @@ impl<'ctx> Evaluator<'ctx> {
             ValueRef::func(0, 0, self.undefined_value(), &name, "", true)
         // User pkgpath
         } else {
-            // Global or local variables.
-            let scopes = pkg_scopes
-                .get(&pkgpath)
-                .unwrap_or_else(|| panic!("package {} is not found", pkgpath));
-            // Scopes 0 is builtin scope, Scopes 1 is the global scope, Scopes 2~ are the local scopes
-            let scopes_len = scopes.len();
             let mut found = false;
-            for i in 0..scopes_len {
-                let index = scopes_len - i - 1;
-                let variables = &scopes[index].variables;
-                if let Some(var) = variables.get(name) {
-                    // Closure vars, 2 denotes the builtin scope and the global scope, here is a closure scope.
-                    result = if let Some(lambda_ctx) = self.last_lambda_ctx() {
-                        let last_lambda_scope = lambda_ctx.level;
-                        // Local scope variable or lambda closure variable.
-                        let ignore = if let Some((start, end)) = self.scope_covers.borrow().last() {
-                            *start <= index && index <= *end
+            {
+                let pkg_scopes = self.pkg_scopes.borrow();
+                // Global or local variables.
+                let scopes = pkg_scopes
+                    .get(&pkgpath)
+                    .unwrap_or_else(|| panic!("package {} is not found", pkgpath));
+                // Scopes 0 is builtin scope, Scopes 1 is the global scope, Scopes 2~ are the local scopes
+                let scopes_len = scopes.len();
+                for i in 0..scopes_len {
+                    let index = scopes_len - i - 1;
+                    let variables = &scopes[index].variables;
+                    if let Some(var) = variables.get(name) {
+                        // Closure vars, 2 denotes the builtin scope and the global scope, here is a closure scope.
+                        result = if let Some(lambda_ctx) = self.last_lambda_ctx() {
+                            let last_lambda_scope = lambda_ctx.level;
+                            // Local scope variable or lambda closure variable.
+                            let ignore =
+                                if let Some((start, end)) = self.scope_covers.borrow().last() {
+                                    *start <= index && index <= *end
+                                } else {
+                                    false
+                                };
+                            if index >= last_lambda_scope && !ignore {
+                                var.clone()
+                            } else {
+                                lambda_ctx.closure.get(name).unwrap_or(var).clone()
+                            }
                         } else {
-                            false
-                        };
-                        if index >= last_lambda_scope && !ignore {
+                            // Not in the lambda, maybe a local variable.
                             var.clone()
-                        } else {
-                            lambda_ctx.closure.get(name).unwrap_or(var).clone()
-                        }
-                    } else {
-                        // Not in the lambda, maybe a local variable.
-                        var.clone()
-                    };
-                    found = true;
-                    break;
+                        };
+                        found = true;
+                        break;
+                    }
                 }
             }
             if found {
