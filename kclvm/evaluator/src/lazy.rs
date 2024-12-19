@@ -315,15 +315,14 @@ impl<'ctx> Evaluator<'ctx> {
         pkgpath: &str,
         key: &str,
         target: &str,
-        default: ValueRef,
-    ) -> ValueRef {
+    ) -> Option<ValueRef> {
         // Deal in-place modify and return it self immediately.
         if key == target && {
             let lazy_scopes = self.lazy_scopes.borrow();
             let scope = lazy_scopes.get(pkgpath).expect(INTERNAL_ERROR_MSG);
             !scope.is_backtracking(key) || scope.setter_len(key) <= 1
         } {
-            default
+            None
         } else {
             let cached_value = {
                 let lazy_scopes = self.lazy_scopes.borrow();
@@ -331,7 +330,7 @@ impl<'ctx> Evaluator<'ctx> {
                 scope.cache.get(key).cloned()
             };
             match cached_value {
-                Some(value) => value.clone(),
+                Some(value) => Some(value),
                 None => {
                     let setters = {
                         let lazy_scopes = self.lazy_scopes.borrow();
@@ -355,7 +354,7 @@ impl<'ctx> Evaluator<'ctx> {
                             let n = setters.len();
                             let index = n - next_level;
                             if index >= n {
-                                default
+                                None
                             } else {
                                 // Call setter function.
                                 self.walk_stmts_with_setter(&setters[index]);
@@ -367,11 +366,11 @@ impl<'ctx> Evaluator<'ctx> {
                                         lazy_scopes.get_mut(pkgpath).expect(INTERNAL_ERROR_MSG);
                                     scope.levels.insert(key.to_string(), level);
                                     scope.cache.insert(key.to_string(), value.clone());
-                                    value
+                                    Some(value)
                                 }
                             }
                         }
-                        _ => default,
+                        _ => None,
                     }
                 }
             }

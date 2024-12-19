@@ -556,8 +556,7 @@ impl<'ctx> Evaluator<'ctx> {
                         &self.current_pkgpath(),
                         name,
                         &self.get_target_var(),
-                        variable,
-                    ),
+                    ).unwrap_or(variable),
                     // Schema closure or global variables
                     _ => variable,
                 }

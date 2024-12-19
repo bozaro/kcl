@@ -1148,7 +1148,7 @@ impl<'ctx> Evaluator<'ctx> {
         result
     }
 
-    pub(crate) fn walk_stmts_with_setter(&self, setter: &Setter) {
+    pub(crate) fn walk_stmts_with_setter(&self, setter: &Setter) -> Option<ValueRef>    {
         if let Some(index) = setter.index {
             let frame = {
                 let frames = self.frames.borrow();
@@ -1171,13 +1171,15 @@ impl<'ctx> Evaluator<'ctx> {
                             .expect(&format!("module {:?} not found in program", module));
                         if let Some(stmt) = module.body.get(setter.stmt) {
                             self.push_backtrack_meta(setter);
-                            self.walk_stmt(stmt).expect(INTERNAL_ERROR_MSG);
+                            let value = self.walk_stmt(stmt).expect(INTERNAL_ERROR_MSG);
                             self.pop_backtrack_meta();
+                            return Some(value);
                         }
                     }
                 }
             }
         }
+        None
     }
 
     pub(crate) fn walk_schema_stmts_with_setter(
