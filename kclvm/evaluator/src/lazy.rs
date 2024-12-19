@@ -357,7 +357,9 @@ impl<'ctx> Evaluator<'ctx> {
                                 None
                             } else {
                                 // Call setter function.
+                                self.push_pkgpath(pkgpath.clone());
                                 self.walk_stmts_with_setter(&setters[index]);
+                                self.pop_pkgpath();
                                 // Store cache value.
                                 {
                                     let value = self.get_variable_in_pkgpath(key, pkgpath);
