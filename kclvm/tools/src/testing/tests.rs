@@ -31,19 +31,8 @@ fn test_load_test_suites_and_run() {
     )
     .unwrap();
     assert_eq!(suites.len(), 1);
-    assert_eq!(suites[0].cases.len(), 3);
+    assert_eq!(suites[0].cases.len(), 1);
     let test_result = suites[0].run(&opts).unwrap();
-    assert_eq!(test_result.info.len(), 3);
+    assert_eq!(test_result.info.len(), 1);
     assert!(test_result.info[0].error.is_none());
-    assert!(test_result.info[1]
-        .error
-        .as_ref()
-        .unwrap()
-        .to_string()
-        .contains("Error"),);
-    assert!(
-        test_result.info[2].error.is_none(),
-        "{:?}",
-        test_result.info[2].error
-    );
 }

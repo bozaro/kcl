@@ -1,0 +1,13 @@
+show_0: 1
+foo1:
+  name: foo
+  value: 0
+foo2:
+  name: foo
+  value: 0
+foo:
+  name: foo
+  value: 0
+foo3:
+  name: foo
+  value: 0

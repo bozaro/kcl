@@ -105,6 +105,44 @@ impl<'ctx> TypedResultWalker<'ctx> for Evaluator<'ctx> {
             self.add_target_var(&name.node.name.node)
         }
         // Load the right value
+        /*
+        let mut value = if self.scope_level() <= GLOBAL_LEVEL && assign_stmt.targets.len() == 1 {
+            let identifier = assign_stmt.targets[0].node.name.node.as_str();
+
+            let pkgpath = self.current_pkgpath();
+            let cached_value = {
+                let lazy_scopes = self.lazy_scopes.borrow();
+                let scope = lazy_scopes.get(pkgpath.as_str()).expect(INTERNAL_ERROR_MSG);
+                scope.cache.get(identifier).cloned()
+            };
+            match cached_value {
+                Some(value) => value.clone(),
+                None => {
+                    let value = self.walk_expr(&assign_stmt.value)?;
+                    self.store_variable(identifier, value.clone());
+                    /*{
+                        let pkg_scopes = &mut self.pkg_scopes.borrow_mut();
+                        let msg = format!("pkgpath {} is not found", pkgpath);
+                        let scopes = pkg_scopes.get_mut(&pkgpath).expect(&msg);
+                        let variables = &mut scopes[0].variables;
+                        variables.insert(identifier.to_string(), value.clone());
+                    }*/
+
+                    let mut lazy_scopes = self.lazy_scopes.borrow_mut();
+                    let scope = lazy_scopes
+                        .get_mut(pkgpath.as_str())
+                        .expect(INTERNAL_ERROR_MSG);
+                    scope
+                        .levels
+                        .insert(identifier.to_string(), self.scope_level());
+                    scope.cache.insert(identifier.to_string(), value.clone());
+                    value
+                }
+            }
+        } else {
+            self.walk_expr(&assign_stmt.value)?
+        };
+        */
         let mut value = self.walk_expr(&assign_stmt.value)?;
         // Runtime type cast if exists the type annotation.
         if let Some(ty) = &assign_stmt.ty {
@@ -243,7 +281,12 @@ impl<'ctx> TypedResultWalker<'ctx> for Evaluator<'ctx> {
                         m
                     })
                     .collect();
-                self.compile_ast_modules(&modules);
+                // Scan import modules
+                for ast_module in modules {
+                    let ast_module = ast_module.read().expect("Failed to acquire module lock");
+                    self.compile_module_import_and_types(&ast_module);
+                }
+                //self.compile_ast_modules(&modules);
                 self.pop_pkgpath();
             }
         }
